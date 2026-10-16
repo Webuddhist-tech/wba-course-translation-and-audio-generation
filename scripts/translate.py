@@ -28,6 +28,7 @@ import re
 import sys
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -107,7 +108,8 @@ names stay in ENGLISH, written in Latin script, inside the {L['name']} sentence.
 {keep}. Treat similar technical terms the same way.
 3. Names of people, channels, organisations, books and brands are never translated or transliterated; \
 keep them exactly as in the English. Keep numbers, prices, percentages, URLs, emojis and symbols (→, •) as they are.
-4. Use these fixed translations for Buddhist terms wherever the concept appears:
+4. Use these fixed translations for Buddhist terms wherever the concept appears. Where two options \
+are separated by "/", choose the one that fits the sentence — never write the slash or both options:
 {terms}
 5. You receive a numbered list of segments (headings, paragraphs, list items, or a quiz question and \
 its options). Return exactly one translation per segment, with the same index, in the same order. \
@@ -156,6 +158,18 @@ def translate_block(client, model, lang, block, glossary, retries=4):
     raise RuntimeError(f"{block['id']} [{lang}] failed after {retries} attempts: {err}")
 
 
+def foreign_scripts(text, source, lang):
+    """Letters from scripts other than the target script and Latin that are not in the source.
+
+    Gemini occasionally slips in a word of a related script (e.g. Burmese or
+    Khmer inside Tibetan), which a TTS voice would garble.
+    """
+    own = "TIBETAN" if lang == "bo" else "DEVANAGARI"
+    return sorted({unicodedata.name(ch, "?").split()[0] for ch in text
+                   if ch.isalpha() and ch not in source
+                   and unicodedata.name(ch, "?").split()[0] not in (own, "LATIN")})
+
+
 def check(units, out, lang):
     """Structural checks on a translation. Returns a list of problems (empty = ok)."""
     problems = []
@@ -166,6 +180,9 @@ def check(units, out, lang):
         if not t:
             problems.append(f"segment {i} empty")
             continue
+        foreign = foreign_scripts(t, u["text"], lang)
+        if foreign:
+            problems.append(f"segment {i} contains {'/'.join(foreign)} characters")
         # Segments that are only names/brands/numbers (capitalised words, e.g. image credits
         # or channel names) may legitimately stay in Latin script, but anything with several
         # ordinary lowercase English words must contain the target script.

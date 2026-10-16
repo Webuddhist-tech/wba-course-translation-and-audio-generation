@@ -3,6 +3,7 @@
 
 Flags, per language:
   missing      block has no translation, or the English changed since it was made
+  foreign_script  letters from another script (e.g. Burmese inside Tibetan) — always an error
   length       segment much shorter/longer than usual for that language (dropped or added text)
   glossary     a glossary term appears in the English but its fixed translation is not found
   english      Latin-script words left in the translation that are not in the source as
@@ -25,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
-from translate import source_hash, source_units  # noqa: E402
+from translate import foreign_scripts, source_hash, source_units  # noqa: E402
 
 TIBETAN_LITERARY = ["འདི་དག", "དེ་དག", "ཡིན་ནོ།", "ཡོད་དོ།", "ལགས་སོ།", "སོ།", "ནི་", "གོ།", "ངོ་།", "འོ།"]
 # Devanagari (०-९) and Tibetan (༠-༩) digits count as the same number as 0-9.
@@ -70,7 +71,7 @@ def main():
 
     report = {}
     for lang in args.langs.split(","):
-        flags = {k: [] for k in ("missing", "length", "glossary", "english", "numbers", "literary")}
+        flags = {k: [] for k in ("missing", "foreign_script", "length", "glossary", "english", "numbers", "literary")}
         recs = []
         for b in blocks:
             f = out / lang / f"{b['id']}.json"
@@ -87,6 +88,9 @@ def main():
         for b, rec in recs:
             for i, (en, tr) in enumerate(pairs(rec)):
                 where = {"id": b["id"], "day": b["chapter_index"], "seg": i, "en": en, "tr": tr}
+                foreign = foreign_scripts(tr, en, lang)
+                if foreign:
+                    flags["foreign_script"].append({**where, "scripts": foreign})
                 if len(en) >= 40:
                     r = len(tr) / len(en) / med
                     if r < 0.5 or r > 2.0:
