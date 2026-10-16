@@ -7,8 +7,11 @@ Reads the archive in memory (nothing is unpacked to disk) and writes:
   <out>/structure.json   chapter > sequential > vertical > component tree
   <out>/by_day/*.md      human-readable review copy, one file per day
 
+Typo fixes listed in data/corrections.json are applied to the extracted text.
+
 Usage:
   python3 -I scripts/extract_course.py COURSE.tar.gz [--out data/extracted]
+                                       [--corrections data/corrections.json]
 """
 import argparse
 import html
@@ -237,6 +240,38 @@ def build(course):
     return blocks, tree
 
 
+def apply_corrections(blocks, corrections):
+    """Apply source-text fixes ({"block", "find", "replace"}) to one block each.
+
+    The original export is never modified; each block records the fixes applied
+    to it. Raises if a correction matches nothing, so stale entries surface.
+    """
+    by_id = {b["id"]: b for b in blocks}
+    for c in corrections:
+        b = by_id.get(c["block"])
+        if b is None:
+            raise SystemExit(f"correction for unknown block {c['block']}: {c['find']!r}")
+        hits = 0
+
+        def fix(s):
+            nonlocal hits
+            hits += s.count(c["find"])
+            return s.replace(c["find"], c["replace"])
+
+        if b["type"] == "html":
+            for s in b["segments"]:
+                s["text"] = fix(s["text"])
+            b["text"] = seg_text(b["segments"])
+        else:
+            b["question"] = fix(b["question"])
+            b["solution"] = fix(b["solution"])
+            for ch in b["choices"]:
+                ch["text"], ch["hint"] = fix(ch["text"]), fix(ch["hint"])
+        if not hits:
+            raise SystemExit(f"correction matched nothing in {c['block']}: {c['find']!r}")
+        b.setdefault("corrections", []).append({"find": c["find"], "replace": c["replace"]})
+
+
 def write_markdown(blocks, out):
     d = out / "by_day"
     d.mkdir(parents=True, exist_ok=True)
@@ -275,10 +310,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("archive")
     ap.add_argument("--out", default="data/extracted")
+    ap.add_argument("--corrections", default="data/corrections.json",
+                    help="typo fixes to apply (skipped if the file does not exist)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     blocks, tree = build(Course(args.archive))
+    corrections = Path(args.corrections)
+    if corrections.exists():
+        fixes = json.loads(corrections.read_text(encoding="utf-8"))
+        apply_corrections(blocks, fixes)
+        print(f"applied {len(fixes)} corrections from {corrections}")
     (out / "blocks.json").write_text(json.dumps(blocks, ensure_ascii=False, indent=2), encoding="utf-8")
     (out / "structure.json").write_text(json.dumps(tree, ensure_ascii=False, indent=2), encoding="utf-8")
     write_markdown(blocks, out)
