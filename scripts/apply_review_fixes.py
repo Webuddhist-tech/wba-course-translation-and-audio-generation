@@ -13,6 +13,7 @@ Usage:
 """
 import argparse
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,8 +30,11 @@ def segments(rec):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--dir", default=str(TR), help="translations folder to fix (default data/translations)")
+    ap.add_argument("--findings", help="folder with findings files (default <dir>/review_findings)")
     args = ap.parse_args()
-    d = TR / "review_findings"
+    tr = Path(args.dir)
+    d = Path(args.findings) if args.findings else tr / "review_findings"
     rejected_file = d / "_rejected.json"
     rejected = {(r["lang"], r["id"], r["en"]) for r in json.loads(rejected_file.read_text())} \
         if rejected_file.exists() else set()
@@ -39,11 +43,16 @@ def main():
         if f.name.startswith("_"):
             continue
         for x in json.loads(f.read_text(encoding="utf-8")):
+            # The review files label quiz options "Option N: "; the stored text has no label.
+            m = re.match(r"Option \d+: ", x["en"])
+            if m:
+                x = {**x, **{k: x[k][m.end():] if x[k].startswith(m.group()) else x[k]
+                             for k in ("en", "current", "fix")}}
             key = (x["lang"], x["id"], x["en"])
             if key in rejected:
                 skipped += 1
                 continue
-            path = TR / x["lang"] / f"{x['id']}.json"
+            path = tr / x["lang"] / f"{x['id']}.json"
             rec = json.loads(path.read_text(encoding="utf-8"))
             for i, (en, holder, field) in enumerate(segments(rec)):
                 if en == x["en"] and holder[field] == x["current"]:
